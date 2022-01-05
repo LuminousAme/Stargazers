@@ -1,0 +1,225 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+/*
+implementation of the Hillaire 2020 atmosphere multiscattering look up table 
+based on the following implementations: by 
+Kevin Sawatzky (https://github.com/ksawatzky777/Strontium/blob/main/assets/shaders/compute/sky/multiscatCompute.srshader)
+and Andrew Helmer (https://www.shadertoy.com/view/slSXRW) 
+*/
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> Result;
+
+//the transmittance look up table
+Texture2D<float4> transLut;
+SamplerState LinearClampSampler;
+
+//texture data
+float2 TextureResolution;
+
+//planet data
+float groundRadius;
+float atmosphereRadius;
+float g;
+float scale;
+float3 albedo;
+
+// Scattering data
+//w or a component is used for height falloff and scale
+float4 rayleighScattering;
+float4 rayleighAbsorb;
+float4 mieScattering;
+float4 mieAbsorb;
+float4 ozoneAbsorb;
+
+//settings
+const int STEPS = 20;
+const int SQRT_SAMPLES = 8;
+const float PI = 3.141592654;
+
+
+//structure to return the lum and f_ms values
+struct MultiScatResults
+{
+    float3 lum;
+    float3 f_ms;
+};
+
+//check if a ray is intersecting a sphere and by how much
+float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad)
+{
+	//tbh I don't really understand how this math works
+    float b = dot(rayOrigin, rayDirection);
+    float c = dot(rayOrigin, rayOrigin) - rad * rad;
+
+    float result = 0.0;
+
+    float discrimnate = b * b - c;
+
+	//used to determine which of the four possible outputs should be returned
+	//special case is when inside the sphere and we need to use the far discriminant
+    int specialCase = ((discrimnate > b * b) ? 1 : 0);
+    int negativeOne = (((c > 0.0 && b > 0.0) || discrimnate < 0.0) ? 1 : 0);
+
+	//if it's the special case, set result to the special case, otherwise set it to the normal case
+    result = lerp((-b - sqrt(discrimnate)), (-b + sqrt(discrimnate)), specialCase);
+	//check if it should be negative one, if it is, set result to that, otherwise keep the value from the above lerp
+    result = lerp(result, -1.0, negativeOne);
+
+	//return the result
+    return result;
+}
+
+//get the direction for a ray from some angle data
+float3 getSphericalDirection(float theta, float phi)
+{
+    return float3(sin(phi) * sin(theta), cos(phi), sin(phi) * cos(theta));
+}
+
+//get the mie particle phase value
+float calcMiePhase(float cosTheta)
+{
+    float numerator = (1.0 - g * g) * (1.0 + cosTheta * cosTheta);
+    float denominator = (2.0 + g * g) * pow(abs((1.0 + g * g - 2.0 * g * cosTheta)), 1.5);
+    
+    return scale * numerator / denominator;
+}
+
+//get the rayleigh particle phase value
+float calcRayleighPhase(float cosTheta)
+{
+    float K = 3.0 / (16.0 * PI);
+    return K * (1.0 + cosTheta * cosTheta);
+}
+
+//function that calculates the ammount of light that is being either absorbed or scattered away at a given point
+float3 computeExtinction(float3 pos)
+{
+    float altitude = (length(pos) * groundRadius) * 1000.0;
+
+    float rayleighDensity = exp(-altitude / rayleighScattering.w);
+    float mieDensity = exp(-altitude / mieScattering.w);
+	
+    float3 rayleighScat = rayleighScattering.rgb * rayleighDensity;
+    float3 mieScat = mieScattering.rgb * mieDensity;
+
+    float3 rayAbsorbtion = rayleighAbsorb.rgb * rayleighDensity;
+    float3 mieAbsorbtion = mieAbsorb.rgb * mieDensity;
+    float3 ozoneAbsorbtion = ozoneAbsorb.rgb * ozoneAbsorb.w * max(0.0, 1.0 - abs(altitude - 25.0) / 15.0);
+
+    return rayleighScat + rayAbsorbtion + mieScat + mieAbsorbtion + ozoneAbsorbtion;
+}
+
+//function to sample the transmittance lut 
+float3 sampleTransmittanceLut(float3 pos, float3 sunDir)
+{
+    float height = length(pos);
+    float3 up = pos / height;
+    
+    float sunCosZenithAngle = dot(sunDir, up);
+    
+    float2 uvs = float2(
+        clamp(0.5 + 0.5 * sunCosZenithAngle, 0.0, 1.0),
+        max(0.0, min(1.0, (height * groundRadius) / (atmosphereRadius - groundRadius)))
+    );
+
+    return transLut.SampleLevel(LinearClampSampler, uvs, 0).rgb;
+}
+
+//calculates the integral to approximate the multiple scattering
+MultiScatResults calculateMultiScat(float3 pos, float3 sunDir)
+{
+    float3 lumTotal = float3(0.0, 0.0, 0.0);
+    float3 fms = float3(0.0, 0.0, 0.0);
+    float inverse_sqrt_samples =  1.0 / float(SQRT_SAMPLES * SQRT_SAMPLES);
+    
+    //does the integral in 3 nested for loops, they should all execute an equal number of times though
+    for (int i = 0; i < SQRT_SAMPLES; i++)
+    {
+        for (int j = 0; i < SQRT_SAMPLES; j++)
+        {
+            //symetric around theta = 0 and theta = PI, so calculating from 0 to PI is sufficient
+            float theta = PI * (float(i) + 0.5) / float(SQRT_SAMPLES);
+            float phi = acos(clamp((1.0 - 2.0 * (float(j) + 0.5) / float(SQRT_SAMPLES)), -1.0, 1.0));
+            float3 rayDir = getSphericalDirection(theta, phi);
+            
+            float atmoDistance = raySphereIntersect(pos, rayDir, atmosphereRadius);
+            float groundDistnace = raySphereIntersect(pos, rayDir, groundRadius);
+            float maxDist = lerp(atmoDistance, groundDistnace, int(groundDistnace > 0.0));
+            
+            float cosTheta = dot(rayDir, sunDir);
+            
+            float miePhaseValue = calcMiePhase(cosTheta);
+            float rayleightPhaseValue = calcRayleighPhase(-cosTheta);
+
+            float3 lum = float3(0.0, 0.0, 0.0);
+            float3 factor = float3(0.0, 0.0, 0.0);
+            float3 transmittance = float3(1.0, 1.0, 1.0);
+            float t = 0.0;
+            for (int k = 0; k < STEPS; k++)
+            {
+                float newT = ((float(k) + 0.3) / float(STEPS)) * maxDist;
+                float dt = newT - t;
+                t = newT;
+                
+                float3 newPos = pos + t * rayDir;
+                
+                float3 extinction = computeExtinction(newPos);
+                float3 sampleTransmittance = exp(-dt * extinction);
+                
+                //integrating
+                float3 scatterNoPhase = rayleighScattering.rgb + mieScattering.rgb;
+                float3 scatteringF = (scatterNoPhase - scatterNoPhase * sampleTransmittance) / extinction;
+                factor += scatteringF * transmittance;
+
+                float3 sunTransmittance = sampleTransmittanceLut(newPos, sunDir);
+                
+                float3 rayleighInScattering = rayleighScattering.rgb * rayleightPhaseValue;
+                float3 mieInScattering = mieScattering.rgb * miePhaseValue;
+                float3 inScattering = (rayleighInScattering + mieInScattering) * sunTransmittance;
+                
+                //finish up the intergration
+                float3 scatteringIntregal = (inScattering - inScattering * sampleTransmittance) / extinction;
+                lum += scatteringIntregal * transmittance;
+                transmittance *= sampleTransmittance;
+            }
+            
+            //special case, hitting the ground
+            float3 hitPos = normalize(pos + groundDistnace * rayDir) * groundRadius;
+            float3 change = transmittance * albedo * sampleTransmittanceLut(hitPos, sunDir);
+            int shouldChange = int(groundDistnace > 0.0 && dot(pos, sunDir) > 0.0);
+            lum = lerp(lum, lum + change, shouldChange);
+            
+            fms += factor * inverse_sqrt_samples;
+            lumTotal += lum * inverse_sqrt_samples;
+        }
+
+    }
+    
+    MultiScatResults result;
+    result.f_ms = fms;
+    result.lum = lumTotal;
+
+    return result;
+}
+
+[numthreads(64,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float2 texelSize = float2(1.0, 1.0) / TextureResolution;
+    float2 uvs = float2(id.yz) + float2(0.5, 0.5) * texelSize;
+    
+    float sunCosTheta = 2.0 * uvs.x - 1.0;
+    float sunTheta = acos(clamp(sunCosTheta, -1.0, 1.0));
+    float height = lerp(groundRadius, atmosphereRadius, uvs.y);
+	
+    float3 pos = float3(0.0, height, 0.0);
+    float3 sunDir = normalize(float3(0.0, sunCosTheta, -sin(sunTheta)));
+    
+    MultiScatResults result = calculateMultiScat(pos, sunDir);
+    
+    float3 psi = result.lum / (1.0 - result.f_ms);
+    Result[id.yz] = float4(max(psi, float3(0.0, 0.0, 0.0)), 1.0);
+}

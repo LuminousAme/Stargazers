@@ -1,0 +1,110 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+/*
+implementation of the Hillaire 2020 atmosphere transmittance look up table 
+based on the following implementations: by 
+Kevin Sawatzky (https://github.com/ksawatzky777/Strontium/blob/main/assets/shaders/compute/sky/transCompute.srshader)
+and Andrew Helmer (https://www.shadertoy.com/view/slSXRW) 
+*/
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> Result;
+
+//the number of iterations used when calculating the transmittance
+const float STEPS = 40;
+
+//texture data
+float2 textureResolution;
+
+//planet data
+float groundRadius;
+float atmosphereRadius;
+
+// Scattering data
+//w or a component is used for height falloff and scale
+float4 rayleighScattering;
+float4 rayleighAbsorb;
+float4 mieScattering;
+float4 mieAbsorb;
+float4 ozoneAbsorb; 
+
+//check if a ray is intersecting a sphere and by how much
+float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad) {
+	//tbh I don't really understand how this math works
+    float b = dot(rayOrigin, rayDirection);
+    float c = dot(rayOrigin, rayOrigin) - rad * rad;
+
+	float result = 0.0;
+
+	float discrimnate = b * b - c;
+
+	//if it's the special case, set result to the special case, otherwise set it to the normal case
+    result = lerp((-b - sqrt(discrimnate)), (-b + sqrt(discrimnate)), int(discrimnate > b * b));
+	//check if it should be negative one, if it is, set result to that, otherwise keep the value from the above lerp
+    result = lerp(result, -1.0, int((c > 0.0 && b > 0.0) || discrimnate < 0.0));
+
+	//return the result
+	return result;
+}
+
+//function that calculates the ammount of light that is being either absorbed or scattered away at a given point
+float3 computeExtinction(float3 pos) {
+	float altitude = (length(pos) * groundRadius) * 1000.0;
+
+	float rayleighDensity = exp(-altitude / rayleighScattering.w);
+	float mieDensity = exp(-altitude / mieScattering.w);
+	
+	float3 rayleighScat = rayleighScattering.rgb * rayleighDensity;
+	float3 mieScat = mieScattering.rgb * mieDensity;
+
+	float3 rayAbsorbtion = rayleighAbsorb.rgb * rayleighDensity;
+	float3 mieAbsorbtion = mieAbsorb.rgb * mieDensity;
+	float3 ozoneAbsorbtion = ozoneAbsorb.rgb * ozoneAbsorb.w * max(0.0, 1.0 - abs(altitude - 25.0) / 15.0);
+
+	return rayleighScat + rayAbsorbtion + mieScat + mieAbsorbtion + ozoneAbsorbtion;
+}
+
+//get the transmittance of a given point iterating backwards along the sun direction
+float3 getSunTransmittance(float3 pos, float3 sunDir) {
+	float atmoDistance = raySphereIntersect(pos, sunDir, atmosphereRadius);
+
+	float t = 0.0;
+	float3 transmittance = float3(1.0, 1.0, 1.0);
+	for (int i = 0; i < STEPS; i++) {
+        float newT = ((float(i) + 0.3) / float(STEPS)) * atmoDistance;
+		float dt = newT - t;
+		t = newT;
+
+		float3 newPos = pos + t * sunDir;
+		float3 extinction = computeExtinction(newPos);
+
+		transmittance *= exp(-dt * extinction);
+	}
+	
+	//no transmittance through the ground
+	int inGround = ((raySphereIntersect(pos, sunDir, groundRadius) > 0.0) ? 1 : 0);
+	transmittance = lerp(transmittance, float3(0.0, 0.0, 0.0), inGround);
+	
+	return transmittance; 
+}
+
+//main function, calculates the transmittance storing it in a lookup table 2D texture
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+	float2 coordinates = float2(id.x + 0.5, id.y + 0.5);
+	float2 uvs = coordinates / textureResolution;
+	
+	float sunCosTheta = 2.0 * uvs.x - 1.0;
+	float sunTheta = acos(clamp(sunCosTheta, -1.0, 1.0));
+	float height = lerp(groundRadius, atmosphereRadius, uvs.y);
+	
+	float3 pos = float3(0.0, height, 0.0);
+	float3 sunDir = normalize(float3(0.0, sunCosTheta, -sin(sunTheta)));
+	
+	float3 transmittance = getSunTransmittance(pos, sunDir);
+
+	Result[id.xy] = float4(float3(max(transmittance, float3(0.0, 0.0, 0.0))), 1.0);
+}

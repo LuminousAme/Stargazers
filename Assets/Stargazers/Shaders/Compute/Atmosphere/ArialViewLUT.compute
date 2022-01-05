@@ -1,0 +1,212 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+/*
+implementation of the Hillaire 2020 atmosphere arial view look up table 
+based on the following implementation by 
+Kevin Sawatzky (https://github.com/ksawatzky777/Strontium/blob/main/assets/shaders/compute/sky/multiscatCompute.srshader)
+*/
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture3D<float4> Result;
+
+//the transmittance look up table
+Texture2D<float4> transLut;
+//the multiscattering lookup table
+Texture2D<float4> multiscatLut;
+SamplerState LinearClampSampler;
+
+//texture data
+float3 TextureResolution;
+
+//planet data
+float groundRadius;
+float atmosphereRadius;
+float g;
+float scale;
+float3 albedo;
+
+//scene data
+float3 sunDirection;
+float3 viewPos;
+float3 cameraPos; //idk what the difference between this and viewpos is supposed to be
+
+//camera data
+float4x4 inverseVP;
+float near;
+float far;
+
+// Scattering data
+//w or a component is used for height falloff and scale
+float4 rayleighScattering;
+float4 rayleighAbsorb;
+float4 mieScattering;
+float4 mieAbsorb;
+float4 ozoneAbsorb;
+
+//settings
+const int STEPS = 32;
+const float OFFSET = 0.01;
+const float PI = 3.141592654;
+
+//check if a ray is intersecting a sphere and by how much
+float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad)
+{
+	//tbh I don't really understand how this math works
+    float b = dot(rayOrigin, rayDirection);
+    float c = dot(rayOrigin, rayOrigin) - rad * rad;
+
+    float result = 0.0;
+
+    float discrimnate = b * b - c;
+
+	//used to determine which of the four possible outputs should be returned
+	//special case is when inside the sphere and we need to use the far discriminant
+    int specialCase = ((discrimnate > b * b) ? 1 : 0);
+    int negativeOne = (((c > 0.0 && b > 0.0) || discrimnate < 0.0) ? 1 : 0);
+
+	//if it's the special case, set result to the special case, otherwise set it to the normal case
+    result = lerp((-b - sqrt(discrimnate)), (-b + sqrt(discrimnate)), specialCase);
+	//check if it should be negative one, if it is, set result to that, otherwise keep the value from the above lerp
+    result = lerp(result, -1.0, negativeOne);
+
+	//return the result
+    return result;
+}
+
+
+//function that calculates the ammount of light that is being either absorbed or scattered away at a given point
+float3 computeExtinction(float3 pos)
+{
+    float altitude = (length(pos) * groundRadius) * 1000.0;
+
+    float rayleighDensity = exp(-altitude / rayleighScattering.w);
+    float mieDensity = exp(-altitude / mieScattering.w);
+	
+    float3 rayleighScat = rayleighScattering.rgb * rayleighDensity;
+    float3 mieScat = mieScattering.rgb * mieDensity;
+
+    float3 rayAbsorbtion = rayleighAbsorb.rgb * rayleighDensity;
+    float3 mieAbsorbtion = mieAbsorb.rgb * mieDensity;
+    float3 ozoneAbsorbtion = ozoneAbsorb.rgb * ozoneAbsorb.w * max(0.0, 1.0 - abs(altitude - 25.0) / 15.0);
+
+    return rayleighScat + rayAbsorbtion + mieScat + mieAbsorbtion + ozoneAbsorbtion;
+}
+
+//function to sample the transmittance lut 
+float3 sampleLUT(Texture2D lut, float3 pos, float3 sunDir)
+{
+    float height = length(pos);
+    float3 up = pos / height;
+    
+    float sunCosZenithAngle = dot(sunDir, up);
+    
+    float2 uvs = float2(
+        clamp(0.5 + 0.5 * sunCosZenithAngle, 0.0, 1.0),
+        max(0.0, min(1.0, (height * groundRadius) / (atmosphereRadius - groundRadius)))
+    );
+
+    return lut.SampleLevel(LinearClampSampler, uvs, 0).rgb;
+}
+
+//get the mie particle phase value
+float calcMiePhase(float cosTheta)
+{
+    float numerator = (1.0 - g * g) * (1.0 + cosTheta * cosTheta);
+    float denominator = (2.0 + g * g) * pow(abs((1.0 + g * g - 2.0 * g * cosTheta)), 1.5);
+    
+    return scale * numerator / denominator;
+}
+
+//get the rayleigh particle phase value
+float calcRayleighPhase(float cosTheta)
+{
+    float K = 3.0 / (16.0 * PI);
+    return K * (1.0 + cosTheta * cosTheta);
+}
+
+//do a single instance of the scattering integral
+float4 raymarchScatter(float3 pos, float3 rayDir, float3 sunDir, float maxDistance)
+{
+    float cosTheta = dot(rayDir, sunDir);
+    float miePhaseValue = calcMiePhase(cosTheta);
+    float raylieghtPhaseValue = calcRayleighPhase(-cosTheta);
+    
+    //raymarching
+    float3 lum = float3(0.0, 0.0, 0.0);
+    float3 transmittance = float3(1.0, 1.0, 1.0);
+    float t = 0.0;
+    for (int i = 0; i < STEPS; i++)
+    {
+        float newT = ((float(i) + 0.3) / float(STEPS)) * maxDistance;
+        float dt = newT - t;
+        t = newT;
+
+        float3 newPos = pos + t * rayDir;
+        
+        float altitude = (length(newPos) - groundRadius) * 1000.0;
+        float rayleighDensity = exp(-altitude / rayleighScattering.w);
+        float mieDensity = exp(-altitude / mieScattering.w);
+        
+        float3 rayleighScat = rayleighScattering.rgb * rayleighDensity;
+        float3 mieScat = mieScattering.rbg * mieDensity;
+        
+        float3 extinction = computeExtinction(newPos);
+        float3 sampleTransmittance = exp(-dt * extinction);
+        
+        float3 sunTransmittance = sampleLUT(transLut, newPos, sunDir);
+        float3 psi = sampleLUT(multiscatLut, newPos, sunDir);
+        
+        float3 rayleighInScattering = rayleighScat * (raylieghtPhaseValue * sunTransmittance + psi);
+        float3 mieInScattering = mieScat * (miePhaseValue * sunTransmittance + psi);
+        float3 inScattering = rayleighInScattering + mieInScattering;
+        
+        //integrate
+        float3 scatteringIntegral = (inScattering - inScattering * sampleTransmittance) / extinction;
+        lum += scatteringIntegral * transmittance;
+        transmittance *= sampleTransmittance;
+    }
+
+    return float4(lum, 1.0 - dot(transmittance, float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)));
+
+}
+
+//this seems like a lot of threads (512) consider moving to (4, 4, 4) which is only 64 threads like the other compute shaders
+[numthreads(8,8,8)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float3 texelSize = float3(1.0, 1.0, 1.0) / TextureResolution;
+    
+    float3 sunDir = normalize(sunDirection);
+    float3 camPos = (cameraPos * 1e-6) + viewPos; //I really do not understand what this does or why it's here
+    
+    float2 pixelPos = id.xy + float2(0.5, 0.5);
+    float3 clipPos = float3(float2(2.0, 2.0) * (pixelPos * texelSize.xy) - float2(1.0, 1.0), 0.0);
+    float4 worldPos = mul(float4(clipPos, 1.0), inverseVP);
+    float3 worldDir = normalize(worldPos.xyz);
+    
+    //slice is the z direction of the texture
+    float currentSlice = (float(id.z) + 0.5) * texelSize.z;
+    currentSlice = currentSlice * currentSlice * TextureResolution.z;
+    
+    float pd = (far - near) * texelSize.z * 1e-6;
+    float maxDistance = pd * currentSlice;
+    
+    float3 newWorldPos = camPos + (maxDistance * worldDir);
+    float vHeight = length(newWorldPos);
+    
+    //special case, marching into the planet
+    float offset = groundRadius + OFFSET + 0.001;
+    float3 newWorldPos2 = normalize(newWorldPos) * offset;
+    float maxDistance2 = length(newWorldPos2 - cameraPos);
+    
+    float acutalMaxDistance = lerp(maxDistance, maxDistance2, int(vHeight <= groundRadius + OFFSET));
+    
+    //do a single scattering raymarch and related integration saving the result to the texture
+    //need to change this to do a check for if it should be using the viewPos or a point on the edge of the atmosphere
+    float4 result = raymarchScatter(camPos, worldDir, sunDir, acutalMaxDistance);
+    result.rgb = result.rgb / float3(result.a, result.a, result.a);
+    
+    Result[id] = result;
+}
