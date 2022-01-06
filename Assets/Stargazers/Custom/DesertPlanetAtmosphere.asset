@@ -1,0 +1,33 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a13867caf3aa957469a0c74d80bac9dd, type: 3}
+  m_Name: DesertPlanetAtmosphere
+  m_EditorClassIdentifier: 
+  transmittanceShader: {fileID: 7200000, guid: 745fd8e88913e894da3758c228d07285, type: 3}
+  multiScatShader: {fileID: 7200000, guid: 6de782dc1a797de42b4e90492915e842, type: 3}
+  aerialViewShader: {fileID: 7200000, guid: 94b1363272bd6b4448cf17a122f711ad, type: 3}
+  skyViewShader: {fileID: 7200000, guid: 87b85352344884a47b6933c241185bd8, type: 3}
+  transLUT: {fileID: 0}
+  multiScatLUT: {fileID: 0}
+  aerialViewLUT: {fileID: 0}
+  skyViewLUT: {fileID: 0}
+  isInit: 1
+  groundRadiusMM: 6.36
+  atmosphereRadiusMM: 6.46
+  rayleighScattering: {x: 5.802, y: 13.558, z: 33.1, w: 1}
+  rayleighAbsorb: {x: 0, y: 0, z: 0, w: 1}
+  mieScattering: {x: 3.996, y: 3.996, z: 3.996, w: 1}
+  mieAbsorb: {x: 4.4, y: 4.4, z: 4.4, w: 1}
+  ozoneAbsorb: {x: 0.65, y: 1.881, z: 0.085, w: 1}
+  g: 0.8
+  scale: 0.119201764
+  albedo: {x: 0.3, y: 0.3, z: 0.3}

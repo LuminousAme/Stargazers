@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 
 [CreateAssetMenu(menuName = "Atlas X Games/Atmosphere Effect")]
+[ExecuteAlways]
 public class AtmosphereEffect : ScriptableObject
 {
     //shaders
@@ -18,7 +19,7 @@ public class AtmosphereEffect : ScriptableObject
     public RenderTexture skyViewLUT;
 
     //flags
-    private bool isInit = false; //DO NOT make this public or serializeField, if you need it somewhere else make a getter, this can't be serialized
+    [SerializeField] private bool isInit = false; //DO NOT make this public or serializeField, if you need it somewhere else make a getter, this can't be serialized
     private bool transLUTDirty = true;
     private bool multiScatLUTDirty = true;
     private bool aerialViewLUTDirty = true;
@@ -27,7 +28,7 @@ public class AtmosphereEffect : ScriptableObject
     //settings for the various textures
     [Space]
     [Header("Transmittance Settings")]
-    [SerializeField] private float groundRadiusMM;
+    public float groundRadiusMM;
     [SerializeField] private float atmosphereRadiusMM;
     [SerializeField] private Vector4 rayleighScattering;
     [SerializeField] private Vector4 rayleighAbsorb;
@@ -85,6 +86,7 @@ public class AtmosphereEffect : ScriptableObject
 
     public void Shutdown()
     {
+        Debug.Log("Hit");
         if(isInit)
         {
             transLUT.Release();
@@ -98,7 +100,7 @@ public class AtmosphereEffect : ScriptableObject
     public void Render()
     {
         //only render if the textures exist 
-        if(isInit)
+        if(isInit && transLUT != null && aerialViewLUT != null && multiScatLUT != null && skyViewLUT != null)
         {
             //if the transmittance lut is dirty then render it
             if(transmittanceShader != null && transLUTDirty)

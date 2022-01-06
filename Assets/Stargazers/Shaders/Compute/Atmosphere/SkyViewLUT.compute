@@ -31,6 +31,9 @@ float3 albedo;
 //scene data
 float3 sunDirection;
 float3 viewPos;
+//float3 viewDir;
+//float3 planetPos;
+//float atmosphereAcutalSize;
 
 // Scattering data
 //w or a component is used for height falloff and scale
@@ -47,12 +50,8 @@ const float PI = 3.141592654;
 //check if a ray is intersecting a sphere and by how much
 float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad)
 {
-	//tbh I don't really understand how this math works
     float b = dot(rayOrigin, rayDirection);
     float c = dot(rayOrigin, rayOrigin) - rad * rad;
-
-    float result = 0.0;
-
     float discrimnate = b * b - c;
 
 	//used to determine which of the four possible outputs should be returned
@@ -60,12 +59,38 @@ float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad)
     int specialCase = ((discrimnate > b * b) ? 1 : 0);
     int negativeOne = (((c > 0.0 && b > 0.0) || discrimnate < 0.0) ? 1 : 0);
 
+    float result = 0.0;
+    
 	//if it's the special case, set result to the special case, otherwise set it to the normal case
     result = lerp((-b - sqrt(discrimnate)), (-b + sqrt(discrimnate)), specialCase);
 	//check if it should be negative one, if it is, set result to that, otherwise keep the value from the above lerp
     result = lerp(result, -1.0, negativeOne);
 
 	//return the result
+    return result;
+}
+
+//check if a ray is intersecting a sphere, and if it is, where
+//based on code from Sebastian Lague's atmosphere video: https://youtu.be/DxfEbulyFcY?t=65
+float2 raySphereIntersectAlt(float3 rayOrigin, float3 rayDirection, float rad)
+{
+    float b = 2 * dot(rayOrigin, rayDirection);
+    float c = dot(rayOrigin, rayOrigin) - rad * rad;
+    float discrimnate = b * b * 4 * c;
+    
+    float s = sqrt(abs(discrimnate));
+    
+    float near = max(0, (-b - s) / 2);
+    float far = (-b + s) / 2;
+    
+    float2 result;
+    
+    //intersected behind ray
+    result = lerp(float2(near, far - near), float2(-1.0, -1.0), int(far < 0));
+    
+    //did not intersect
+    result = lerp(result, float2(-1.0, -1.0), int(discrimnate <= 0));
+    
     return result;
 }
 
@@ -188,9 +213,18 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float groundDist = raySphereIntersect(viewPos, rayDir, groundRadius);
     float maxDist = lerp(groundDist, atmoDist, int(groundDist < 0.0));
     
-    //do a single scattering raymarch and related integration saving the result to the texture
+
     //need to change this to do a check for if it should be using the viewPos or a point on the edge of the atmosphere
+    
+    //this model assumes that the planet is at (0,0,0) and we need the point at the edge of the atmosphere
+    //float3 viewPosRelativeToPlanet = viewPos - planetPos; 
+    //float2 intersectWithAtmosphere = raySphereIntersectAlt(viewPosRelativeToPlanet, viewDir, atmosphereAcutalSize);
+    
+    //float3 atmoSpherePoint = viewPos + viewDir * (intersectWithAtmosphere.x + 0.001);
+    
+    //do a single scattering raymarch and related integration saving the result to the texture
     float3 result = raymarchScatter(viewPos, rayDir, newSunDir, maxDist);
+    //result = lerp();
 
     Result[id.xy] = float4(result, 1.0);
 }
