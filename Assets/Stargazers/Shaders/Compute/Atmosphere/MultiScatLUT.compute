@@ -83,7 +83,7 @@ float calcRayleighPhase(float cosTheta)
 //function that calculates the ammount of light that is being either absorbed or scattered away at a given point
 float3 computeExtinction(float3 pos)
 {
-    float altitude = (length(pos) - groundRadius) * 1000.0;
+    float altitude = (length(pos) - groundRadius) * 1000;
 
     float rayleighDensity = exp(-altitude / rayleighScattering.w);
     float mieDensity = exp(-altitude / mieScattering.w);
@@ -100,14 +100,14 @@ float3 computeExtinction(float3 pos)
 
 float3 computeRayleightScat(float3 pos)
 {
-    float altitude = (length(pos) - groundRadius) * 1000.0;
+    float altitude = (length(pos) - groundRadius) * 1000;
     float rayleighDensity = exp(-altitude / rayleighScattering.w);
     return rayleighScattering.rgb * rayleighDensity;
 }
 
 float3 computeMieScat(float3 pos)
 {
-    float altitude = (length(pos) - groundRadius) * 1000.0;
+    float altitude = (length(pos) - groundRadius) * 1000;
     float mieDensity = exp(-altitude / mieScattering.w);
     return mieScattering.rgb * mieDensity;
 }
@@ -189,9 +189,28 @@ float3 calculateMultiScat(float3 pos, float3 sunDir)
             }
             
             //special case, hitting the ground
-            float3 hitPos = normalize(pos + groundDistnace * rayDir) * groundRadius;
-            float3 change = transmittance * albedo * sampleTransmittanceLut(hitPos, sunDir);
-            lum = (groundDistnace > 0.0 && dot(pos, sunDir) > 0.0) ? lum + change : lum;
+            if (groundDistnace > 0.0)
+            {
+                float3 hitPos = pos + groundDistnace * rayDir;
+                if (dot(pos, sunDir) > 0.0)
+                {
+                    float3 normal = normalize(hitPos);
+                    float nDotL = clamp(dot(normal, sunDir), 0.0, 1.0);
+                    float3 change = transmittance * albedo * sampleTransmittanceLut(normal * groundRadius, sunDir) * nDotL / PI;
+                    lum += change;
+                }
+            }
+            
+            /*
+            float3 hitPos = pos + groundDistnace * rayDir;
+            float3 normal = normalize(hitPos);
+            float nDotL = clamp(dot(normal, sunDir), 0.0, 1.0);
+            float3 change = transmittance * albedo * sampleTransmittanceLut(normal * groundRadius, sunDir);
+            if (groundDistnace > 0.0 && dot(pos, sunDir))
+            {
+                lum += change;
+            }*/
+            //lum = (groundDistnace > 0.0 && dot(pos, sunDir) > 0.0) ? lum + change : lum;
             
             fms += factor * inverse_samples;
             lumTotal += lum * inverse_samples;
@@ -199,7 +218,7 @@ float3 calculateMultiScat(float3 pos, float3 sunDir)
 
     }
 
-    return lumTotal / (1.0 - fms);
+    return lumTotal / (1.0 - min(fms, float3(1.0, 1.0, 1.0)));
 }
 
 [numthreads(8,8,1)]

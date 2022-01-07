@@ -874,7 +874,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1239264504}
   m_LocalRotation: {x: 0, y: 0.7071068, z: -0, w: -0.7071068}
-  m_LocalPosition: {x: 2346, y: 1, z: 18}
+  m_LocalPosition: {x: 3350, y: 1, z: 18}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}
@@ -1101,7 +1101,8 @@ MonoBehaviour:
   effect: {fileID: 11400000, guid: 3b43464e35fc2814a85112db98dbe966, type: 2}
   skyviewMat: {fileID: 2100000, guid: 4f7eaf42afecd154da85d53bfa094631, type: 2}
   sun: {fileID: 372385756}
-  AtmosphereSizeReal: 200
+  PlanetRadiusReal: 150
+  AtmoRadiusReal: 200
 --- !u!1 &1435559367
 GameObject:
   m_ObjectHideFlags: 0

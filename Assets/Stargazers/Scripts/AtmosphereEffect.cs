@@ -27,7 +27,7 @@ public class AtmosphereEffect : ScriptableObject
     [Space]
     [Header("Transmittance Settings")]
     public float groundRadiusMM;
-    [SerializeField] private float atmosphereRadiusMM;
+    public float atmosphereRadiusMM;
     [SerializeField] private Vector4 rayleighScattering;
     [SerializeField] private Vector4 rayleighAbsorb;
     [SerializeField] private Vector4 mieScattering;

@@ -20,5 +20,5 @@ public static class ExtensionMethods
     {
         Vector4 v4 = new Vector4(v.x, v.y, v.z, 0f);
         return v4;
-    } 
+    }
 }

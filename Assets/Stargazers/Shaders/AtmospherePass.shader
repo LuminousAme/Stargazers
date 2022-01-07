@@ -126,7 +126,7 @@ Shader "FullScreen/AtmospherePass"
 		float3 result = lerp(float3(1.0 , 0.0 , 0.0), skyViewColor, int(farAtmo > 0.0));
 		result = (farAtmo > 0.0) ? skyViewColor : color.rgb;
 		
-		return float4(result, 1.0);
+		return float4(farAtmoVec, 1.0);
 
 		/*
 		float2 hitInfo = raySphereIntsect(_ViewPosition.xyz, rayDir, planetOrigin, _AtmoRadiusReal);

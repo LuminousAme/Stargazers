@@ -32,5 +32,5 @@ Material:
     - _PlanetPos: {r: 2500, g: 0, b: 0, a: 0}
     - _RelativeCameraPosition: {r: 0, g: 0, b: 0, a: 0}
     - _SunDirection: {r: 1, g: 0, b: 0, a: 0}
-    - _ViewPosition: {r: 2346, g: 1, b: 18, a: 0}
+    - _ViewPosition: {r: 3350, g: 1, b: 18, a: 0}
   m_BuildTextureStacks: []
