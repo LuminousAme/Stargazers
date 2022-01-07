@@ -1,13 +1,5 @@
 Shader "FullScreen/AtmospherePass"
 {
-	Properties{
-		//TEXTURE2D_X(_SkyViewLUT);
-		_SkyViewLut("Texture", 2D) = "white" {}
-		_RelativeCameraPosition("ViewPos", Vector) = (0,0,0,0)
-		_SunDirection("SunDir", Vector) = (0,0,0,0) //w unused
-		_GroundRadiusMM("GroundRadiusMM", Float) = 0.0
-		_AtmoRadiusReal("AtmoRadiusReal", Float) = 0.0
-	}
 
 		HLSLINCLUDE
 
@@ -41,10 +33,11 @@ Shader "FullScreen/AtmospherePass"
 			// you can check them out in the source code of the core SRP package.
 
 	sampler2D _SkyViewLut;
-	float4 _RelativeCameraPosition; //w unused
+	float4 _ViewPosition; //w unused
 	float4 _SunDirection; //w unused
 	float _GroundRadiusMM;
 	float _AtmoRadiusReal;
+	float4 _PlanetPos;
 
 	//gets the sign of a float
 	float GetSign(float num) {
@@ -52,7 +45,9 @@ Shader "FullScreen/AtmospherePass"
 	}
 
 	//gets a value from the sky view lut
-	float3 SampleSkyViewLUT(float3 rayOrigin, float3 rayDir) {
+	float3 SampleSkyViewLUT(float3 rayOrigin, float3 rayDir, float3 spherePosition) {
+		float3 offset = rayOrigin - spherePosition;
+
 		float3 sunDir = _SunDirection.xyz;
 		float height = length(rayOrigin);
 		float3 up = rayOrigin / height;
@@ -74,23 +69,28 @@ Shader "FullScreen/AtmospherePass"
 		float v = 0.5 + 0.5 * GetSign(altitudeAngle) * sqrt(abs(altitudeAngle) / (0.5 * 3.14159265358));
 		float2 uvs = float2(u, v);
 
+		//return float3(u, v, 1.0);
 		return tex2D(_SkyViewLut, uvs).rgb;
 	}
 
 	//code derived heavily from Sebastian Lague's atmosphere video: https://youtu.be/DxfEbulyFcY?t=64
-	float2 raySphereIntsect(float3 rayOrigin, float3 rayDir, float rad) {
-		float b = 2 * dot(rayOrigin, rayDir);
-		float c = dot(rayOrigin, rayOrigin) - rad * rad;
-		float discrim = b * b - 4 * c;
+	float2 raySphereIntsect(float3 rayOrigin, float3 rayDir, float3 spherePosition, float rad) {
+		float3 offset = rayOrigin - spherePosition;
 
-		float s = sqrt(abs(discrim));
-		float nearDist = max(0, (-b, -s) / 2.0);
-		float farDist = (-b + s) / 2.0;
+		float a = dot(rayDir, rayDir);
+		float b = 2 * dot(offset, rayDir);
+		float c = dot(offset, offset) - (rad * rad);
+		float discrim = b * b - 4 * a * c;
 
-		float2 result = lerp(float2(-1.0, 0), float2(nearDist, farDist), int(farDist >= 0));
-		result = lerp(result, float2(-1.0, 0), int(discrim > 0.0));
+		float s = sqrt(discrim);
+		float nearDist = max(0, (-b - s) / (2.0 * a));
+		float farDist = (-b + s) / (2.0 * a);
 
+		int failed = int(discrim <= 0.0 || farDist < 0.0);
+		float2 result = lerp(float2(nearDist, farDist - nearDist), float2(1e36, 0), failed);
 		return result;
+
+		return float2(1e36, 0);
 	}
 
 
@@ -107,25 +107,49 @@ Shader "FullScreen/AtmospherePass"
             color = float4(CustomPassLoadCameraColor(varyings.positionCS.xy, 0), 1);
 
         // Add your custom pass code here
-		float3 rayOrigin = _RelativeCameraPosition.xyz;
-		float3 rayDir = normalize(viewDirection);
-		//float3 skyViewColor = SampleSkyViewLUT(rayDir);
-		float SceneDepth = posInput.linearDepth;
+		float3 rayOrigin = _ViewPosition.xyz;
+		float3 viewDir = -viewDirection;
+		float3 rayDir = normalize(viewDir);
 
-		float2 hitInfo = raySphereIntsect(_RelativeCameraPosition.xyz, rayDir, _AtmoRadiusReal);
+		float SceneDepth = posInput.linearDepth;
+		float3 planetOrigin = _PlanetPos.xyz;
+
+		float2 hitInfo = raySphereIntsect(rayOrigin, rayDir, planetOrigin, _AtmoRadiusReal);
 		float nearAtmo = hitInfo.x;
 		float farAtmo = min(hitInfo.y, SceneDepth - nearAtmo);
+
+		float3 pointInAtmo = rayOrigin + rayDir * nearAtmo;
+		float3 skyViewColor = SampleSkyViewLUT(pointInAtmo, rayDir, planetOrigin);
+
+		float3 blend = color.rgb * (1 - skyViewColor) + skyViewColor;
+		float3 farAtmoVec = farAtmo / (_AtmoRadiusReal * 2);
+		float3 result = lerp(float3(1.0 , 0.0 , 0.0), skyViewColor, int(farAtmo > 0.0));
+		result = (farAtmo > 0.0) ? skyViewColor : color.rgb;
 		
+		return float4(result, 1.0);
 
-		float3 pointInAtmo = rayOrigin + rayDir * (nearAtmo + 0.0001);
+		/*
+		float2 hitInfo = raySphereIntsect(_ViewPosition.xyz, rayDir, planetOrigin, _AtmoRadiusReal);
+		float nearAtmo = hitInfo.x;
+		float farAtmo = min(hitInfo.y, SceneDepth - nearAtmo);*/
 		
-		float3 skyViewColor = SampleSkyViewLUT(pointInAtmo, rayDir);
+		//float3 rayOrigin = _ViewPosition.xyz - _PlanetPos.xyz;
+		//float3 pointInAtmo = rayOrigin + rayDir * (nearAtmo + 0.0001);
+		
+		//float3 skyViewColor = SampleSkyViewLUT(pointInAtmo, rayDir, planetOrigin);
 
-		float4 result = lerp(color, float4(skyViewColor, 1.0), int(farAtmo > 0.0));
+		//float4 result = lerp(color, float4(skyViewColor, 1.0), int(farAtmo > 0.0));
 
-        // Fade value allow you to increase the strength of the effect while the camera gets closer to the custom pass volume
-        float f = 1 - abs(_FadeValue * 2 - 1);
-		return result;
+		//this isn't working, it seems like I'm not getting the near and far correctly
+		//return result;
+		//return color;
+		//return farAtmo / (_AtmoRadiusReal * 2);
+		//float3 test = hitInfo.y;
+		//return float4(test, 1.0);
+		//return float4(1.0 - color.rgb, 1.0);
+		
+		//return float4(hitInfo.x, hitInfo.x, hitInfo.x, 1.0);
+		//return color;
     }
 
     ENDHLSL

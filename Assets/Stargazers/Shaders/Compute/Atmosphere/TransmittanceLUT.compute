@@ -13,7 +13,7 @@ and Andrew Helmer (https://www.shadertoy.com/view/slSXRW)
 RWTexture2D<float4> Result;
 
 //the number of iterations used when calculating the transmittance
-const float STEPS = 40;
+static const int STEPS = 40;
 
 //texture data
 float2 textureResolution;
@@ -41,9 +41,9 @@ float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad) {
 	float discrimnate = b * b - c;
 
 	//if it's the special case, set result to the special case, otherwise set it to the normal case
-    result = lerp((-b - sqrt(discrimnate)), (-b + sqrt(discrimnate)), int(discrimnate > b * b));
+    result = (discrimnate > b * b) ? (-b + sqrt(discrimnate)) : (-b - sqrt(discrimnate));
 	//check if it should be negative one, if it is, set result to that, otherwise keep the value from the above lerp
-    result = lerp(result, -1.0, int((c > 0.0 && b > 0.0) || discrimnate < 0.0));
+    result = ((c > 0.0 && b > 0.0) || discrimnate < 0.0) ? -1.0 : result;
 
 	//return the result
 	return result;
@@ -51,7 +51,7 @@ float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad) {
 
 //function that calculates the ammount of light that is being either absorbed or scattered away at a given point
 float3 computeExtinction(float3 pos) {
-	float altitude = (length(pos) * groundRadius) * 1000.0;
+	float altitude = (length(pos) - groundRadius) * 1000.0;
 
 	float rayleighDensity = exp(-altitude / rayleighScattering.w);
 	float mieDensity = exp(-altitude / mieScattering.w);
@@ -84,8 +84,7 @@ float3 getSunTransmittance(float3 pos, float3 sunDir) {
 	}
 	
 	//no transmittance through the ground
-	int inGround = ((raySphereIntersect(pos, sunDir, groundRadius) > 0.0) ? 1 : 0);
-	transmittance = lerp(transmittance, float3(0.0, 0.0, 0.0), inGround);
+    transmittance = (raySphereIntersect(pos, sunDir, groundRadius) > 0.0) ? 0.0 : transmittance;
 	
 	return transmittance; 
 }
@@ -106,5 +105,5 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 	
 	float3 transmittance = getSunTransmittance(pos, sunDir);
 
-	Result[id.xy] = float4(float3(max(transmittance, float3(0.0, 0.0, 0.0))), 1.0);
+	Result[id.xy] = float4(max(transmittance, float3(0.0, 0.0, 0.0)), 1.0);
 }

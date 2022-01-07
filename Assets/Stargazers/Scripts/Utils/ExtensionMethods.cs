@@ -15,4 +15,10 @@ public static class ExtensionMethods
         float[] arr = { v.x, v.y, v.z };
         c.SetFloats(name, arr);
     }
+
+    public static Vector4 Vec3ToVec4(this Vector3 v)
+    {
+        Vector4 v4 = new Vector4(v.x, v.y, v.z, 0f);
+        return v4;
+    } 
 }

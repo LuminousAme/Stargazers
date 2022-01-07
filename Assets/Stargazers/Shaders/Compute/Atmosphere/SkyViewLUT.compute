@@ -44,53 +44,26 @@ float4 mieAbsorb;
 float4 ozoneAbsorb;
 
 //settings
-const int STEPS = 32;
-const float PI = 3.141592654;
+static const int STEPS = 32;
+static const float PI = 3.141592654;
 
 //check if a ray is intersecting a sphere and by how much
 float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad)
 {
+	//tbh I don't really understand how this math works
     float b = dot(rayOrigin, rayDirection);
     float c = dot(rayOrigin, rayOrigin) - rad * rad;
-    float discrimnate = b * b - c;
-
-	//used to determine which of the four possible outputs should be returned
-	//special case is when inside the sphere and we need to use the far discriminant
-    int specialCase = ((discrimnate > b * b) ? 1 : 0);
-    int negativeOne = (((c > 0.0 && b > 0.0) || discrimnate < 0.0) ? 1 : 0);
 
     float result = 0.0;
-    
+
+    float discrimnate = b * b - c;
+
 	//if it's the special case, set result to the special case, otherwise set it to the normal case
-    result = lerp((-b - sqrt(discrimnate)), (-b + sqrt(discrimnate)), specialCase);
+    result = (discrimnate > b * b) ? (-b + sqrt(discrimnate)) : (-b - sqrt(discrimnate));
 	//check if it should be negative one, if it is, set result to that, otherwise keep the value from the above lerp
-    result = lerp(result, -1.0, negativeOne);
+    result = ((c > 0.0 && b > 0.0) || discrimnate < 0.0) ? -1.0 : result;
 
 	//return the result
-    return result;
-}
-
-//check if a ray is intersecting a sphere, and if it is, where
-//based on code from Sebastian Lague's atmosphere video: https://youtu.be/DxfEbulyFcY?t=65
-float2 raySphereIntersectAlt(float3 rayOrigin, float3 rayDirection, float rad)
-{
-    float b = 2 * dot(rayOrigin, rayDirection);
-    float c = dot(rayOrigin, rayOrigin) - rad * rad;
-    float discrimnate = b * b * 4 * c;
-    
-    float s = sqrt(abs(discrimnate));
-    
-    float near = max(0, (-b - s) / 2);
-    float far = (-b + s) / 2;
-    
-    float2 result;
-    
-    //intersected behind ray
-    result = lerp(float2(near, far - near), float2(-1.0, -1.0), int(far < 0));
-    
-    //did not intersect
-    result = lerp(result, float2(-1.0, -1.0), int(discrimnate <= 0));
-    
     return result;
 }
 
@@ -122,7 +95,7 @@ float3 sampleLUT(Texture2D lut, float3 pos, float3 sunDir)
     
     float2 uvs = float2(
         clamp(0.5 + 0.5 * sunCosZenithAngle, 0.0, 1.0),
-        max(0.0, min(1.0, (height * groundRadius) / (atmosphereRadius - groundRadius)))
+        max(0.0, min(1.0, (height - groundRadius) / (atmosphereRadius - groundRadius)))
     );
 
     return lut.SampleLevel(LinearClampSampler, uvs, 0).rgb;
@@ -197,8 +170,8 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     
     //figuring out the non-linear parameterization while also calculating the scattering details we need
     float azimuthAngle = 2.0 * PI * (uvs.x - 0.5);
-    float coord = lerp(2.0 * uvs.y - 1.0, 1.0 - 2.0 * uvs.y, int(uvs.y < 0.5));
-    float adjV = lerp(coord * coord, -(coord * coord), int(uvs.y < 0.5));
+    float coord = (uvs.y < 0.5) ? 1.0 - 2.0 * uvs.y : 2.0 * uvs.y - 1.0;
+    float adjV = (uvs.y < 0.5) ? -(coord * coord) : coord * coord;
     
     float height = length(viewPos);
     float3 up = viewPos / height;
@@ -211,9 +184,8 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     
     float atmoDist = raySphereIntersect(viewPos, rayDir, atmosphereRadius);
     float groundDist = raySphereIntersect(viewPos, rayDir, groundRadius);
-    float maxDist = lerp(groundDist, atmoDist, int(groundDist < 0.0));
+    float maxDist = (groundDist > 0.0) ? groundDist : atmoDist;
     
-
     //need to change this to do a check for if it should be using the viewPos or a point on the edge of the atmosphere
     
     //this model assumes that the planet is at (0,0,0) and we need the point at the edge of the atmosphere
@@ -225,6 +197,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     //do a single scattering raymarch and related integration saving the result to the texture
     float3 result = raymarchScatter(viewPos, rayDir, newSunDir, maxDist);
     //result = lerp();
+    //result = sampleLUT(transLut, viewPos, newSunDir);
 
     Result[id.xy] = float4(result, 1.0);
 }

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using UnityEngine;
 
 [CreateAssetMenu(menuName = "Atlas X Games/Atmosphere Effect")]
-[ExecuteAlways]
 public class AtmosphereEffect : ScriptableObject
 {
     //shaders
@@ -19,7 +18,6 @@ public class AtmosphereEffect : ScriptableObject
     public RenderTexture skyViewLUT;
 
     //flags
-    [SerializeField] private bool isInit = false; //DO NOT make this public or serializeField, if you need it somewhere else make a getter, this can't be serialized
     private bool transLUTDirty = true;
     private bool multiScatLUTDirty = true;
     private bool aerialViewLUTDirty = true;
@@ -57,16 +55,23 @@ public class AtmosphereEffect : ScriptableObject
 
     public void Init()
     {
-        if(!isInit)
+        if(transLUT == null)
         {
             transLUT = new RenderTexture(256, 64, 0);
             transLUT.enableRandomWrite = true;
             transLUT.Create();
+        }
+
+        if(multiScatLUT == null)
+        {
 
             multiScatLUT = new RenderTexture(32, 32, 0);
             multiScatLUT.enableRandomWrite = true;
             multiScatLUT.Create();
+        }
 
+        if(aerialViewLUT == null)
+        {
             //3D render texture
             RenderTextureDescriptor aerialDescriptor = new RenderTextureDescriptor(32, 32);
             aerialDescriptor.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
@@ -74,33 +79,34 @@ public class AtmosphereEffect : ScriptableObject
             aerialViewLUT = new RenderTexture(aerialDescriptor);
             aerialViewLUT.enableRandomWrite = true;
             aerialViewLUT.Create();
+        }
 
+        if(skyViewLUT == null)
+        {
             skyViewLUT = new RenderTexture(256, 128, 0);
             skyViewLUT.enableRandomWrite = true;
             skyViewLUT.Create();
-
-            SetAllDirty();
         }
-        isInit = true;
+
+        SetAllDirty();
     }
 
     public void Shutdown()
     {
         Debug.Log("Hit");
-        if(isInit)
-        {
-            transLUT.Release();
-            multiScatLUT.Release();
-            aerialViewLUT.Release();
-            skyViewLUT.Release();
-        }
-        isInit = false;
+      
+        if(transLUT != null) transLUT.Release();
+        if (multiScatLUT != null) multiScatLUT.Release();
+        if(aerialViewLUT != null) aerialViewLUT.Release();
+        if(skyViewLUT != null) skyViewLUT.Release();
     }
 
     public void Render()
     {
+        Init();
+
         //only render if the textures exist 
-        if(isInit && transLUT != null && aerialViewLUT != null && multiScatLUT != null && skyViewLUT != null)
+        if(transLUT != null && aerialViewLUT != null && multiScatLUT != null && skyViewLUT != null)
         {
             //if the transmittance lut is dirty then render it
             if(transmittanceShader != null && transLUTDirty)
@@ -125,7 +131,7 @@ public class AtmosphereEffect : ScriptableObject
             {
                 multiScatShader.SetTexture(0, "Result", multiScatLUT);
                 multiScatShader.SetTexture(0, "transLut", transLUT);
-                multiScatShader.SetVector2("textureResolution", new Vector2(multiScatLUT.width, multiScatLUT.height));
+                multiScatShader.SetVector2("TextureResolution", new Vector2(multiScatLUT.width, multiScatLUT.height));
                 multiScatShader.SetFloat("groundRadius", groundRadiusMM);
                 multiScatShader.SetFloat("atmosphereRadius", atmosphereRadiusMM);
                 multiScatShader.SetFloat("g", g);
@@ -138,7 +144,7 @@ public class AtmosphereEffect : ScriptableObject
                 multiScatShader.SetVector("ozoneAbsorb", ozoneAbsorb);
 
                 //best guess on this
-                multiScatShader.Dispatch(0, 1, multiScatLUT.width, multiScatLUT.height);
+                multiScatShader.Dispatch(0, multiScatLUT.width / 8, multiScatLUT.height / 8, 1);
                 multiScatLUTDirty = false;
             }
 
@@ -191,6 +197,7 @@ public class AtmosphereEffect : ScriptableObject
                 skyViewShader.SetVector("ozoneAbsorb", ozoneAbsorb);
 
                 skyViewShader.Dispatch(0, skyViewLUT.width / 8, skyViewLUT.height / 8, 1);
+
                 skyViewLUTDirty = false;
             }
 

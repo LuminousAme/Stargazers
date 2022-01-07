@@ -31,11 +31,12 @@ public class BodyWithAtmosphere : MonoBehaviour
             effect.Render();
 
             //set the materials settings
-            skyviewMat.SetTexture("Texture", effect.skyViewLUT);
-            skyviewMat.SetVector("ViewPos", relativeCamPos);
-            skyviewMat.SetVector("SunDir", sunDir);
-            skyviewMat.SetFloat("GroundRadiusMM", effect.groundRadiusMM);
-            skyviewMat.SetFloat("AtmoRadiusReal", AtmosphereSizeReal);
+            skyviewMat.SetTexture("_SkyViewLut", effect.skyViewLUT);
+            skyviewMat.SetVector("_ViewPosition", Camera.main.transform.position.Vec3ToVec4());
+            skyviewMat.SetVector("_SunDirection", sunDir.Vec3ToVec4());
+            skyviewMat.SetFloat("_GroundRadiusMM", effect.groundRadiusMM);
+            skyviewMat.SetFloat("_AtmoRadiusReal", AtmosphereSizeReal);
+            skyviewMat.SetVector("_PlanetPos", transform.position.Vec3ToVec4());
         }
     }
 }
