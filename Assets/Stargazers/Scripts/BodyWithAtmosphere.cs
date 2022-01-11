@@ -71,10 +71,10 @@ public class BodyWithAtmosphere : MonoBehaviour
                 //set the materials settings
                 
                 skyviewMat.SetTexture("_SkyViewLut", effect.skyViewLUT);
-                skyviewMat.SetTexture("_transLut", effect.transLUT);
-                skyviewMat.SetTexture("_multiScatLut", effect.multiScatLUT);
+                skyviewMat.SetTexture("_TransLut", effect.transLUT);
+                skyviewMat.SetTexture("_MultiscatLut", effect.multiScatLUT);
                 skyviewMat.SetVector("_ViewPosition", Camera.main.transform.position.Vec3ToVec4());
-                skyviewMat.SetVector("_SunDirection", sunDir.Vec3ToVec4());
+                skyviewMat.SetVector("_SunDirection", -sunDir.Vec3ToVec4()); //this is negative cause the effect has the sun direction inverted for some reason idk
                 skyviewMat.SetFloat("_GroundRadiusMM", effect.groundRadiusMM);
                 skyviewMat.SetFloat("_AtmoRadiusMM", effect.atmosphereRadiusMM);
                 skyviewMat.SetFloat("_GroundRadiusReal", PlanetRadiusReal);

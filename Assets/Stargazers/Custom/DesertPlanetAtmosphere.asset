@@ -29,7 +29,7 @@ MonoBehaviour:
   ozoneAbsorb: {x: 0.65, y: 1.881, z: 0.085, w: 1}
   g: 0.8
   scale: 0.119201764
-  albedo: {x: 0.1, y: 0.1, z: 0.1}
+  albedo: {x: 1, y: 0.6347196, z: 0}
   RenderAerialView: 0
   intensity: 1
   RenderSkyView: 0

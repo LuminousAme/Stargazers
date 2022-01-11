@@ -25,12 +25,12 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _AtmoRadiusReal: 300
+    - _AtmoRadiusReal: 200
     - _GroundRadiusMM: 6.36
     m_Colors:
     - _CameraFoward: {r: 1.0000001, g: 0, b: -0.00000011920929, a: 0}
     - _PlanetPos: {r: 2500, g: 0, b: 0, a: 0}
     - _RelativeCameraPosition: {r: 0, g: 0, b: 0, a: 0}
     - _SunDirection: {r: 1, g: 0, b: 0, a: 0}
-    - _ViewPosition: {r: 2286, g: -2.7, b: -198, a: 0}
+    - _ViewPosition: {r: 2291.3, g: -2.7, b: -11.5, a: 0}
   m_BuildTextureStacks: []

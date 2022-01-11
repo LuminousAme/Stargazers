@@ -312,7 +312,7 @@ Shader "FullScreen/AtmospherePass"
 		float3 lumColor = float3(0.0, 0.0, 0.0);
 
 		if (farAtmo > 0.0) {
-			lumColor = raymarchScatter(pointInAtmo, rayDir, sunDir, maxDist);
+			lumColor = raymarchScatter(pointInAtmo, rayDir, sunDir, maxDist) * _intensity;
 		}
 		float3 result = color.rgb + lumColor * _intensity;
 		result = color.rgb * (1 - lumColor) + lumColor;
