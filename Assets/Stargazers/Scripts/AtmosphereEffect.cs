@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 
 [CreateAssetMenu(menuName = "Atlas X Games/Atmosphere Effect")]
 public class AtmosphereEffect : ScriptableObject
@@ -28,19 +29,22 @@ public class AtmosphereEffect : ScriptableObject
     [Header("Transmittance Settings")]
     public float groundRadiusMM;
     public float atmosphereRadiusMM;
-    [SerializeField] private Vector4 rayleighScattering;
-    [SerializeField] private Vector4 rayleighAbsorb;
-    [SerializeField] private Vector4 mieScattering;
-    [SerializeField] private Vector4 mieAbsorb;
-    [SerializeField] private Vector4 ozoneAbsorb;
+    public Vector4 rayleighScattering;
+    public Vector4 rayleighAbsorb;
+    public Vector4 mieScattering;
+    public Vector4 mieAbsorb;
+    public Vector4 ozoneAbsorb;
 
     [Space]
     [Header("Multiple Scattering Settings")]
-    [SerializeField] private float g;
-    [SerializeField] private float scale;
+    public float g;
+    public float scale;
     [SerializeField] private Vector3 albedo;
 
     //Aerial View settings, will be updated automatically by other scripts using setters
+    [Space]
+    [Header("Aerial View Settings")]
+    [SerializeField] private bool RenderAerialView = false;
     private Vector3 cameraPos;
     private Vector3 viewPos; //seriously what is the difference between these???
     private Vector3 SunDirection;
@@ -49,6 +53,10 @@ public class AtmosphereEffect : ScriptableObject
     private Matrix4x4 inverseVP;
 
     //skyview doesn't need any data that the others don't already have
+    [Space]
+    [Header("Sky View Settings")]
+    public float intensity = 5f;
+    [SerializeField] private bool RenderSkyView = false;
 
     private void OnEnable() => Init();
     private void OnDisable() => Shutdown();
@@ -83,7 +91,7 @@ public class AtmosphereEffect : ScriptableObject
 
         if(skyViewLUT == null)
         {
-            skyViewLUT = new RenderTexture(256, 128, 0);
+            skyViewLUT = new RenderTexture(256, 128, 0, GraphicsFormat.R8G8B8A8_SNorm);
             skyViewLUT.enableRandomWrite = true;
             skyViewLUT.Create();
         }
@@ -149,7 +157,7 @@ public class AtmosphereEffect : ScriptableObject
             }
 
             //if the aerialview lut is dirty then render it
-            if(aerialViewShader != null && aerialViewLUTDirty)
+            if(RenderAerialView && aerialViewShader != null && aerialViewLUTDirty)
             {
                 aerialViewShader.SetTexture(0, "Result", aerialViewLUT);
                 aerialViewShader.SetTexture(0, "transLut", transLUT);
@@ -177,7 +185,7 @@ public class AtmosphereEffect : ScriptableObject
             }
 
             //if the skyview lut is dirty then render it
-            if(skyViewShader != null && skyViewLUTDirty)
+            if(true && skyViewShader != null && skyViewLUTDirty)
             {
                 skyViewShader.SetTexture(0, "Result", skyViewLUT);
                 skyViewShader.SetTexture(0, "transLut", transLUT);
@@ -187,7 +195,6 @@ public class AtmosphereEffect : ScriptableObject
                 skyViewShader.SetFloat("atmosphereRadius", atmosphereRadiusMM);
                 skyViewShader.SetFloat("g", g);
                 skyViewShader.SetFloat("scale", scale);
-                skyViewShader.SetVector3("albedo", albedo);
                 skyViewShader.SetVector3("sunDirection", SunDirection);
                 skyViewShader.SetVector3("viewPos", viewPos);
                 skyViewShader.SetVector("rayleighScattering", rayleighScattering);

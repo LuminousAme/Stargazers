@@ -33,24 +33,57 @@ Shader "FullScreen/AtmospherePass"
 			// you can check them out in the source code of the core SRP package.
 
 	sampler2D _SkyViewLut;
+	sampler2D _TransLut;
+	sampler2D _MultiscatLut;
 	float4 _ViewPosition; //w unused
 	float4 _SunDirection; //w unused
 	float _GroundRadiusMM;
+	float _AtmoRadiusMM;
+	float _GroundRadiusReal;
 	float _AtmoRadiusReal;
 	float4 _PlanetPos;
+	float _intensity;
+	float g;
+	float scale;
+
+	// Scattering data
+	//w or a component is used for height falloff and scale
+	float4 rayleighScattering;
+	float4 rayleighAbsorb;
+	float4 mieScattering;
+	float4 mieAbsorb;
+	float4 ozoneAbsorb;
 
 	//gets the sign of a float
 	float GetSign(float num) {
 		return lerp(-1.0, 1.0, int(num >= 0));
 	}
 
+	//inverse lerp function
+	float InverseLerp(float a, float b, float value) {
+		return (value - a) / (b - a);
+	}
+
+	//remap function
+	float ReMap(float oldMin, float oldMax, float newMin, float newMax, float value) {
+		float t = InverseLerp(oldMin, oldMax, value);
+		return lerp(newMin, newMax, t);
+	}
+
 	//gets a value from the sky view lut
 	float3 SampleSkyViewLUT(float3 rayOrigin, float3 rayDir, float3 spherePosition) {
-		float3 offset = rayOrigin - spherePosition;
+		//get the position relative to the planet
+		float3 offset = rayOrigin - spherePosition; 
 
+		//convert the offset to be in the correct units
+		float3 offSetDir = normalize(offset);
+		float dist = ReMap(_GroundRadiusReal, _AtmoRadiusReal, _GroundRadiusMM, _AtmoRadiusMM, length(offset));
+		offset = offSetDir * dist;
+
+		//do the rest of the lookup 
 		float3 sunDir = _SunDirection.xyz;
-		float height = length(rayOrigin);
-		float3 up = rayOrigin / height;
+		float height = length(offset);
+		float3 up = offset / height;
 
 		float horizonAngle = acos(clamp(sqrt(height * height - _GroundRadiusMM * _GroundRadiusMM) / height, 0.0, 1.0));
 		float altitudeAngle = horizonAngle - acos(dot(rayDir, up));
@@ -73,6 +106,25 @@ Shader "FullScreen/AtmospherePass"
 		return tex2D(_SkyViewLut, uvs).rgb;
 	}
 
+	//check if a ray is intersecting a sphere and by how much
+	float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad)
+	{
+		float b = dot(rayOrigin, rayDirection);
+		float c = dot(rayOrigin, rayOrigin) - rad * rad;
+
+		float result = 0.0;
+
+		float discrimnate = b * b - c;
+
+		//if it's the special case, set result to the special case, otherwise set it to the normal case
+		result = (discrimnate > b* b) ? (-b + sqrt(discrimnate)) : (-b - sqrt(discrimnate));
+		//check if it should be negative one, if it is, set result to that, otherwise keep the value from the above
+		result = ((c > 0.0 && b > 0.0) || discrimnate < 0.0) ? -1.0 : result;
+
+		//return the result
+		return result;
+	}
+
 	//code derived heavily from Sebastian Lague's atmosphere video: https://youtu.be/DxfEbulyFcY?t=64
 	float2 raySphereIntsect(float3 rayOrigin, float3 rayDir, float3 spherePosition, float rad) {
 		float3 offset = rayOrigin - spherePosition;
@@ -87,12 +139,135 @@ Shader "FullScreen/AtmospherePass"
 		float farDist = (-b + s) / (2.0 * a);
 
 		int failed = int(discrim <= 0.0 || farDist < 0.0);
-		float2 result = lerp(float2(nearDist, farDist - nearDist), float2(1e36, 0), failed);
+		//float2 result = lerp(float2(nearDist, farDist - nearDist), float2(1e36, 0), failed);
+		float2 result = (failed) ? float2(1e36, 0) : float2(nearDist, farDist - nearDist);
 		return result;
-
-		return float2(1e36, 0);
 	}
 
+	//based on the following video by Martin Donald https://youtu.be/OCZTVpfMSys
+	float2 altRaySphere(float3 rayOrigin, float3 rayDir, float3 spherePosition, float rad, float maxDistance) {
+		float t = dot(spherePosition - rayOrigin, rayDir);
+		float3 P = rayOrigin + rayDir * t;
+		float y = length(spherePosition - P);
+
+		if (y > rad) {
+			return float2(-1.0, -1.0);
+		}
+
+		float x = sqrt(rad * rad - y * y);
+		float t1 = max(t - x, 0.0);
+		float t2 = min(t + x, maxDistance);
+
+		return float2(t1, t2);
+	}
+
+	//function that calculates the ammount of light that is being either absorbed or scattered away at a given point
+	float3 computeExtinction(float3 pos)
+	{
+		float altitude = (length(pos) - _GroundRadiusMM) * 1000.0;
+
+		float rayleighDensity = exp(-altitude / rayleighScattering.w);
+		float mieDensity = exp(-altitude / mieScattering.w);
+
+		float3 rayleighScat = rayleighScattering.rgb * rayleighDensity;
+		float3 mieScat = mieScattering.rgb * mieDensity;
+
+		float3 rayAbsorbtion = rayleighAbsorb.rgb * rayleighDensity;
+		float3 mieAbsorbtion = mieAbsorb.rgb * mieDensity;
+		float3 ozoneAbsorbtion = ozoneAbsorb.rgb * ozoneAbsorb.w * max(0.0, 1.0 - abs(altitude - 25.0) / 15.0);
+
+		return rayleighScat + rayAbsorbtion + mieScat + mieAbsorbtion + ozoneAbsorbtion;
+	}
+
+	float3 computeRayleightScat(float3 pos)
+	{
+		float altitude = (length(pos) - _GroundRadiusMM) * 1000.0;
+		float rayleighDensity = exp(-altitude / rayleighScattering.w);
+		return rayleighScattering.rgb * rayleighDensity;
+	}
+
+	float3 computeMieScat(float3 pos)
+	{
+		float altitude = (length(pos) - _GroundRadiusMM) * 1000.0;
+		float mieDensity = exp(-altitude / mieScattering.w);
+		return mieScattering.rgb * mieDensity;
+	}
+
+	//get the mie particle phase value
+	float calcMiePhase(float cosTheta)
+	{
+		float numerator = (1.0 - g * g) * (1.0 + cosTheta * cosTheta);
+		float denominator = (2.0 + g * g) * pow(abs((1.0 + g * g - 2.0 * g * cosTheta)), 1.5);
+
+		return scale * numerator / denominator;
+	}
+
+	//get the rayleigh particle phase value
+	float calcRayleighPhase(float cosTheta)
+	{
+		//float PI = 3.141592654;
+		float K = 3.0 / (16.0 * PI);
+		return K * (1.0 + cosTheta * cosTheta);
+	}
+
+	//function to sample the transmittance or multiscat lut 
+	float3 sampleLUT(sampler2D lut, float3 pos, float3 sunDir)
+	{
+		float height = length(pos);
+		float3 up = pos / height;
+
+		float sunCosZenithAngle = dot(sunDir, up);
+
+		float2 uvs = float2(
+			clamp(0.5 + 0.5 * sunCosZenithAngle, 0.0, 1.0),
+			max(0.0, min(1.0, (height - _GroundRadiusMM) / (_AtmoRadiusMM - _GroundRadiusMM)))
+			);
+
+		return tex2Dlod(lut, float4(uvs, 0.0, 0.0)).rgb;
+	}
+
+	//do a single instance of the scattering integral
+	float3 raymarchScatter(float3 pos, float3 rayDir, float3 sunDir, float maxDistance)
+	{
+		float cosTheta = dot(rayDir, sunDir);
+		float miePhaseValue = calcMiePhase(cosTheta);
+		float raylieghtPhaseValue = calcRayleighPhase(-cosTheta);
+		float STEPS = 32;
+
+		//raymarching
+		float3 lum = float3(0.0, 0.0, 0.0);
+		float3 transmittance = float3(1.0, 1.0, 1.0);
+		float t = 0.0;
+		for (float i = 0.0; i < STEPS; i += 1.0)
+		{
+			float newT = ((i + 0.3) / STEPS) * maxDistance;
+			float dt = newT - t;
+			t = newT;
+
+			float3 newPos = pos + rayDir * t; //seems something is going wrong with this value
+
+			float3 rayleighScat = computeRayleightScat(newPos);
+			float3 mieScat = computeMieScat(newPos);
+
+			float3 extinction = computeExtinction(newPos);
+
+			float3 sampleTransmittance = exp(-dt * extinction);
+
+			float3 sunTransmittance = sampleLUT(_TransLut, newPos, sunDir);
+			float3 psi = sampleLUT(_MultiscatLut, newPos, sunDir);
+
+			float3 rayleighInScattering = rayleighScat * (raylieghtPhaseValue * sunTransmittance + psi);
+			float3 mieInScattering = mieScat * (miePhaseValue * sunTransmittance + psi);
+			float3 inScattering = rayleighInScattering + mieInScattering;
+
+			//integrate
+			float3 scatteringIntegral = (inScattering - inScattering * sampleTransmittance) / extinction;
+			lum += scatteringIntegral * transmittance;
+			transmittance *= sampleTransmittance;
+		}
+
+		return lum;
+	}
 
     float4 FullScreenPass(Varyings varyings) : SV_Target
     {
@@ -107,49 +282,47 @@ Shader "FullScreen/AtmospherePass"
             color = float4(CustomPassLoadCameraColor(varyings.positionCS.xy, 0), 1);
 
         // Add your custom pass code here
-		float3 rayOrigin = _ViewPosition.xyz;
-		float3 viewDir = -viewDirection;
+		float3 rayOrigin = _WorldSpaceCameraPos;
+		float3 viewDir = -viewDirection; //this is negative because unity has this vector inverted (pointed towards the camera not away from it) for some reason
 		float3 rayDir = normalize(viewDir);
 
-		float SceneDepth = posInput.linearDepth;
+		float SceneDepth = LinearEyeDepth(depth, _ZBufferParams);
 		float3 planetOrigin = _PlanetPos.xyz;
 
-		float2 hitInfo = raySphereIntsect(rayOrigin, rayDir, planetOrigin, _AtmoRadiusReal);
+		float2 hitInfo = altRaySphere(rayOrigin, rayDir, planetOrigin, _AtmoRadiusReal, SceneDepth);
 		float nearAtmo = hitInfo.x;
-		float farAtmo = min(hitInfo.y, SceneDepth - nearAtmo);
+		float farAtmo = hitInfo.y;
 
-		float3 pointInAtmo = rayOrigin + rayDir * nearAtmo;
-		float3 skyViewColor = SampleSkyViewLUT(pointInAtmo, rayDir, planetOrigin);
+		float3 relativeRayOrigin = rayOrigin - planetOrigin;
+		float3 relativeRayOriginDir = normalize(relativeRayOrigin);
+		float relativeDistance = ReMap(_GroundRadiusReal, _AtmoRadiusReal, _GroundRadiusMM, _AtmoRadiusMM, length(relativeRayOrigin));
+		relativeRayOrigin = relativeRayOriginDir * relativeDistance;
+		
+		float atmoEdge = altRaySphere(relativeRayOrigin, rayDir, float3(0.0, 0.0, 0.0), _AtmoRadiusMM, 1e36);
+		bool outOfAtmo = length(relativeRayOrigin) >= _AtmoRadiusMM;
+		float3 upOffset = relativeRayOriginDir * -1e-3;
+		float3 pointInAtmo = (outOfAtmo && atmoEdge >= 0.0) ? relativeRayOrigin + atmoEdge * rayDir + upOffset : relativeRayOrigin;
 
-		float3 blend = color.rgb * (1 - skyViewColor) + skyViewColor;
+		float groundDist = raySphereIntersect(pointInAtmo, rayDir, _GroundRadiusMM);
+		float atmoDist = raySphereIntersect(pointInAtmo, rayDir, _AtmoRadiusMM);
+		float maxDist = (groundDist < 0.0) ? atmoDist : groundDist;
+
+		float3 sunDir = normalize(_SunDirection.xyz);
+		
+		float3 lumColor = float3(0.0, 0.0, 0.0);
+
+		if (farAtmo > 0.0) {
+			lumColor = raymarchScatter(pointInAtmo, rayDir, sunDir, maxDist);
+		}
+		float3 result = color.rgb + lumColor * _intensity;
+		result = color.rgb * (1 - lumColor) + lumColor;
+
 		float3 farAtmoVec = farAtmo / (_AtmoRadiusReal * 2);
-		float3 result = lerp(float3(1.0 , 0.0 , 0.0), skyViewColor, int(farAtmo > 0.0));
-		result = (farAtmo > 0.0) ? skyViewColor : color.rgb;
-		
-		return float4(farAtmoVec, 1.0);
 
-		/*
-		float2 hitInfo = raySphereIntsect(_ViewPosition.xyz, rayDir, planetOrigin, _AtmoRadiusReal);
-		float nearAtmo = hitInfo.x;
-		float farAtmo = min(hitInfo.y, SceneDepth - nearAtmo);*/
+		float3 depthVec = Linear01Depth(depth, _ZBufferParams) * length(viewDirection);
 		
-		//float3 rayOrigin = _ViewPosition.xyz - _PlanetPos.xyz;
-		//float3 pointInAtmo = rayOrigin + rayDir * (nearAtmo + 0.0001);
-		
-		//float3 skyViewColor = SampleSkyViewLUT(pointInAtmo, rayDir, planetOrigin);
-
-		//float4 result = lerp(color, float4(skyViewColor, 1.0), int(farAtmo > 0.0));
-
-		//this isn't working, it seems like I'm not getting the near and far correctly
-		//return result;
-		//return color;
-		//return farAtmo / (_AtmoRadiusReal * 2);
-		//float3 test = hitInfo.y;
-		//return float4(test, 1.0);
-		//return float4(1.0 - color.rgb, 1.0);
-		
-		//return float4(hitInfo.x, hitInfo.x, hitInfo.x, 1.0);
-		//return color;
+		float3 blep = (nearAtmo < SceneDepth) ? float3(1.0, 1.0, 1.0) : float3(0.0, 0.0, 0.0);
+		return float4(result, 1.0);
     }
 
     ENDHLSL

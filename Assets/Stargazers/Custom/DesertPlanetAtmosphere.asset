@@ -15,7 +15,7 @@ MonoBehaviour:
   transmittanceShader: {fileID: 7200000, guid: 745fd8e88913e894da3758c228d07285, type: 3}
   multiScatShader: {fileID: 7200000, guid: 6de782dc1a797de42b4e90492915e842, type: 3}
   aerialViewShader: {fileID: 7200000, guid: 94b1363272bd6b4448cf17a122f711ad, type: 3}
-  skyViewShader: {fileID: 7200000, guid: 87b85352344884a47b6933c241185bd8, type: 3}
+  skyViewShader: {fileID: 7200000, guid: 2e5f44eafc62e7947bcda0e325880b17, type: 3}
   transLUT: {fileID: 0}
   multiScatLUT: {fileID: 0}
   aerialViewLUT: {fileID: 0}
@@ -30,3 +30,6 @@ MonoBehaviour:
   g: 0.8
   scale: 0.119201764
   albedo: {x: 0.1, y: 0.1, z: 0.1}
+  RenderAerialView: 0
+  intensity: 1
+  RenderSkyView: 0

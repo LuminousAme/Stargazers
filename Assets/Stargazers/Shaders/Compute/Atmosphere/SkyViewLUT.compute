@@ -26,7 +26,6 @@ float groundRadius;
 float atmosphereRadius;
 float g;
 float scale;
-float3 albedo;
 
 //scene data
 float3 sunDirection;
@@ -41,8 +40,8 @@ float4 mieAbsorb;
 float4 ozoneAbsorb;
 
 //settings
-static const int STEPS = 32;
-static const float PLANET_OFFSET = 1e-4;
+static const float STEPS = 32.0;
+static const float PLANET_OFFSET = 1e-3;
 static const float PI = 3.141592654;
 
 //check if a ray is intersecting a sphere and by how much
@@ -62,6 +61,26 @@ float raySphereIntersect(float3 rayOrigin, float3 rayDirection, float rad)
 
 	//return the result
     return result;
+}
+
+float2 raySphereIntsect2(float3 rayOrigin, float3 rayDir, float3 spherePosition, float rad)
+{
+    float3 offset = rayOrigin - spherePosition;
+
+    float a = dot(rayDir, rayDir);
+    float b = 2 * dot(offset, rayDir);
+    float c = dot(offset, offset) - (rad * rad);
+    float discrim = b * b - 4 * a * c;
+
+    float s = sqrt(discrim);
+    float nearDist = max(0, (-b - s) / (2.0 * a));
+    float farDist = (-b + s) / (2.0 * a);
+
+    int failed = int(discrim <= 0.0 || farDist < 0.0);
+    float2 result = lerp(float2(nearDist, farDist - nearDist), float2(1e36, 0), failed);
+    return result;
+
+    return float2(1e36, 0);
 }
 
 //function that calculates the ammount of light that is being either absorbed or scattered away at a given point
@@ -128,6 +147,11 @@ float calcRayleighPhase(float cosTheta)
     return K * (1.0 + cosTheta * cosTheta);
 }
 
+float InverseLerp(float a, float b, float value)
+{
+    return (value - a) / (b - a);
+}
+
 //do a single instance of the scattering integral
 float3 raymarchScatter(float3 pos, float3 rayDir, float3 sunDir, float maxDistance)
 {
@@ -139,19 +163,19 @@ float3 raymarchScatter(float3 pos, float3 rayDir, float3 sunDir, float maxDistan
     float3 lum = float3(0.0, 0.0, 0.0);
     float3 transmittance = float3(1.0, 1.0, 1.0);
     float t = 0.0;
-    float3 d = 1.0;
-    for (int i = 0; i < STEPS; i++)
+    for (float i = 0.0; i < STEPS; i+= 1.0)
     {
-        float newT = ((float(i) + 0.3) / float(STEPS)) * maxDistance;
+        float newT = ((i + 0.3) / STEPS) * maxDistance;
         float dt = newT - t;
         t = newT;
-
-        float3 newPos = pos + t * rayDir;
        
+        float3 newPos = pos + rayDir * t; //seems something is going wrong with this value
+        
         float3 rayleighScat = computeRayleightScat(newPos);
         float3 mieScat = computeMieScat(newPos);
         
         float3 extinction = computeExtinction(newPos);
+        
         float3 sampleTransmittance = exp(-dt * extinction);
         
         float3 sunTransmittance = sampleLUT(transLut, newPos, sunDir);
@@ -165,24 +189,13 @@ float3 raymarchScatter(float3 pos, float3 rayDir, float3 sunDir, float maxDistan
         float3 scatteringIntegral = (inScattering - inScattering * sampleTransmittance) / extinction;
         lum += scatteringIntegral * transmittance;
         transmittance *= sampleTransmittance;
-        
-        d *= extinction;
     }
-
-    //return transmittance;
+    
     return lum;
-    //float r = (d.r == 0.0) ? 1.0 : 0.0;
-    //float g = (d.g == 0.0) ? 1.0 : 0.0;
-    //float b = (d.b == 0.0) ? 1.0 : 0.0;
-    //return float3(r, g, b);
-    //return normalize(maxDistance);
-    //return normalize(d);
-    //return float(STEPS) / 64.0;
-    //return float3(1.0, 1.0, 1.0);
 }
 
-[numthreads(8,8,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
 {
     //base uvs
     float2 uvs = float2((0.5 + id.x) / TextureResolution.x, (0.5 + id.y) / TextureResolution.y);
@@ -202,6 +215,11 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float3 newSunDir = normalize(float3(0.0, sin(sunAltitude), -cos(sunAltitude)));
     
     //handling views outside of the atmosphere
+    /*
+    float atmoEdge = raySphereIntersect(viewPos, rayDir, atmosphereRadius);
+    bool outOfAtmo = height >= atmosphereRadius;
+    float3 upOffset = up * -PLANET_OFFSET;
+    float3 newViewPos = (outOfAtmo && atmoEdge >= 0.0) ? viewPos + atmoEdge * rayDir + upOffset : viewPos;*/
     float atmoEdge = raySphereIntersect(viewPos, rayDir, atmosphereRadius);
     bool outOfAtmo = height >= atmosphereRadius;
     float3 upOffset = up * -PLANET_OFFSET;
@@ -211,13 +229,18 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     float groundDist = raySphereIntersect(newViewPos, rayDir, groundRadius);
     float maxDist = (groundDist < 0.0) ? atmoDist : groundDist;
     
-    //do a single scattering raymarch and related integration saving the result to the texture
-    float3 result = raymarchScatter(newViewPos, rayDir, newSunDir, maxDist);
+    float3 result = float3(0.0, 0.0, 0.0);
+    if (!(outOfAtmo && atmoEdge < 0.0))
+    {
+        //do a single scattering raymarch and related integration saving the result to the texture
+        result = raymarchScatter(newViewPos, rayDir, newSunDir, maxDist);
+    }
     
     //do not use the result if the ray did not intersect with the atmoshpere at all
-    result = (outOfAtmo && atmoEdge <= 0.0) ? float3(0.0, 0.0, 0.0) : result;
-
-    //Result[id.xy] = float4(sunDirection, 1.0);
+    //result = (outOfAtmo && atmoEdge < 0.0) ? float3(0.0, 0.0, 0.0) : result;
+    
+    float3 blep = (atmoEdge < 0.0) ? float3(1.0, 1.0, 1.0) : float3(0.0, 0.0, 0.0);
+    //float3 blep = (outOfAtmo) ? float3(1.0, 1.0, 1.0) : float3(0.0, 0.0, 0.0);
+    //blep = atmosphereRadius - groundRadius;
     Result[id.xy] = float4(result, 1.0);
-    //Result[id.xy] = float4(uvs.x, adjV, 1.0, 1.0);
 }
